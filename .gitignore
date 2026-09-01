@@ -1,0 +1,31 @@
+# Environment variables and secrets
+.env
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+
+# Local data and logs
+data/
+logs/
+*.log
+
+# Flink runtime state
+checkpoints/
+savepoints/
+
+# IDE configuration
+.vscode/
+.idea/
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.swp
