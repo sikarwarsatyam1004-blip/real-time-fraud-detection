@@ -67,6 +67,12 @@ services:
     command: jobmanager
 
     environment:
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: "8123"
+      CLICKHOUSE_DATABASE: ${CLICKHOUSE_DATABASE:-fraud_detection}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-fraud_user}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-change_me}
+
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: jobmanager
         jobmanager.memory.process.size: 1024m
@@ -93,6 +99,12 @@ services:
     command: taskmanager
 
     environment:
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: "8123"
+      CLICKHOUSE_DATABASE: ${CLICKHOUSE_DATABASE:-fraud_detection}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-fraud_user}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-change_me}
+
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: jobmanager
         taskmanager.memory.process.size: 1536m
