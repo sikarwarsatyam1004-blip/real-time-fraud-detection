@@ -1,0 +1,407 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: Flink Production Alerts
+    folder: Flink Production Alerts
+    interval: 1m
+
+    rules:
+      - uid: flink-target-down
+        title: Flink Target Down
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: prometheus
+            model:
+              datasource:
+                type: prometheus
+                uid: prometheus
+              editorMode: code
+              expr: 'up{job=~"flink-jobmanager|flink-taskmanager"}'
+              instant: true
+              intervalMs: 1000
+              legendFormat: __auto
+              maxDataPoints: 43200
+              range: false
+              refId: A
+
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 1
+                    type: lt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - C
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              refId: C
+              type: threshold
+
+        noDataState: Alerting
+        execErrState: Alerting
+        for: 1m
+
+        annotations:
+          summary: '🚨 Flink Target Down'
+          description: |
+            One or more Flink monitoring targets are unavailable.
+
+            Current status: {{ printf "%.0f" $values.A.Value }}
+            Expected status: 1
+            Instance: {{ $labels.instance }}
+            Job: {{ $labels.job }}
+            Severity: critical
+
+            Impact:
+            The Flink pipeline may be partially or fully unavailable.
+
+            Check:
+            - JobManager container
+            - TaskManager container
+            - Prometheus target status
+            - Docker container health
+            - Flink service logs
+
+        labels:
+          service: flink
+          severity: critical
+
+        isPaused: false
+
+
+      - uid: flink-failed-checkpoints
+        title: Failed Checkpoints
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: prometheus
+            model:
+              datasource:
+                type: prometheus
+                uid: prometheus
+              editorMode: code
+              expr: flink_jobmanager_job_numberOfFailedCheckpoints
+              instant: true
+              intervalMs: 1000
+              legendFormat: __auto
+              maxDataPoints: 43200
+              range: false
+              refId: A
+
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - C
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              refId: C
+              type: threshold
+
+        noDataState: NoData
+        execErrState: Error
+        for: 1m
+
+        annotations:
+          summary: '⚠️ Flink Checkpoint Failure'
+          description: |
+            Flink has reported failed checkpoints.
+
+            Failed checkpoints: {{ printf "%.0f" $values.A.Value }}
+            Expected value: 0
+            Instance: {{ $labels.instance }}
+            Severity: warning
+
+            Impact:
+            Repeated checkpoint failures can affect reliable recovery.
+
+            Check:
+            - JobManager logs
+            - TaskManager health
+            - Checkpoint storage
+            - Disk availability
+            - Backpressure
+
+        labels:
+          service: flink
+          severity: warning
+
+        isPaused: false
+
+
+      - uid: flink-high-jvm-heap
+        title: High JVM Heap Usage
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: prometheus
+            model:
+              datasource:
+                type: prometheus
+                uid: prometheus
+              editorMode: code
+              expr: '100 * flink_taskmanager_Status_JVM_Memory_Heap_Used / flink_taskmanager_Status_JVM_Memory_Heap_Max'
+              instant: true
+              intervalMs: 1000
+              legendFormat: __auto
+              maxDataPoints: 43200
+              range: false
+              refId: A
+
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 80
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - C
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              refId: C
+              type: threshold
+
+        noDataState: NoData
+        execErrState: Error
+        for: 2m
+
+        annotations:
+          summary: '⚠️ High TaskManager JVM Heap Usage'
+          description: |
+            TaskManager JVM heap usage has exceeded the configured threshold.
+
+            Current heap usage: {{ printf "%.1f" $values.A.Value }}%
+            Threshold: 80%
+            Instance: {{ $labels.instance }}
+            Severity: warning
+
+            Impact:
+            Sustained memory pressure may increase garbage collection and can cause task failures.
+
+            Check:
+            - JVM heap utilization
+            - Garbage collection
+            - TaskManager workload
+            - Parallelism
+            - TaskManager memory allocation
+
+        labels:
+          service: flink
+          severity: warning
+
+        isPaused: false
+
+
+      - uid: flink-high-checkpoint-duration
+        title: High Checkpoint Duration
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: prometheus
+            model:
+              datasource:
+                type: prometheus
+                uid: prometheus
+              editorMode: code
+              expr: flink_jobmanager_job_lastCheckpointDuration
+              instant: true
+              intervalMs: 1000
+              legendFormat: __auto
+              maxDataPoints: 43200
+              range: false
+              refId: A
+
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 5000
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - C
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              refId: C
+              type: threshold
+
+        noDataState: NoData
+        execErrState: Error
+        for: 2m
+
+        annotations:
+          summary: '⚠️ Slow Flink Checkpoint'
+          description: |
+            The latest Flink checkpoint exceeded the configured duration threshold.
+
+            Current duration: {{ printf "%.0f" $values.A.Value }} ms
+            Threshold: 5000 ms
+            Instance: {{ $labels.instance }}
+            Severity: warning
+
+            Impact:
+            Slow checkpoints can increase recovery time and may indicate state or storage pressure.
+
+            Check:
+            - Checkpoint storage latency
+            - State size
+            - TaskManager load
+            - Backpressure
+            - Disk/filesystem performance
+
+        labels:
+          service: flink
+          severity: warning
+
+        isPaused: false
+
+
+      - uid: flink-high-backpressure
+        title: High Backpressure
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: prometheus
+            model:
+              datasource:
+                type: prometheus
+                uid: prometheus
+              editorMode: code
+              expr: max(flink_taskmanager_job_task_backPressuredTimeMsPerSecond)
+              instant: true
+              intervalMs: 1000
+              legendFormat: __auto
+              maxDataPoints: 43200
+              range: false
+              refId: A
+
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 500
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - C
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              refId: C
+              type: threshold
+
+        noDataState: NoData
+        execErrState: Error
+        for: 2m
+
+        annotations:
+          summary: '⚠️ High Flink Backpressure Detected'
+          description: |
+            Flink backpressure has remained above the configured threshold.
+
+            Current value: {{ printf "%.0f" $values.A.Value }} ms/s
+            Threshold: 500 ms/s
+            Severity: warning
+
+            Impact:
+            Processing may be slowing down and records may begin to accumulate.
+
+            Check:
+            - Downstream operators
+            - TaskManager CPU and memory
+            - Kafka throughput
+            - ClickHouse sink performance
+            - Processing bottlenecks
+
+        labels:
+          service: flink
+          severity: warning
+
+        isPaused: false
