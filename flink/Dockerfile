@@ -7,7 +7,9 @@ RUN apt-get update && \
         python3 \
         python3-pip \
         python3-dev \
-        wget && \
+        wget \
+        curl \
+        procps && \
     rm -rf /var/lib/apt/lists/*
 
 RUN ln -sf /usr/bin/python3 /usr/bin/python
@@ -23,5 +25,8 @@ RUN python3 -m pip install \
 
 RUN wget -P /opt/flink/lib \
     https://repo.maven.apache.org/maven2/org/apache/flink/flink-sql-connector-kafka/5.0.0-2.1/flink-sql-connector-kafka-5.0.0-2.1.jar
+
+RUN wget -P /opt/flink/lib \
+    https://repo.maven.apache.org/maven2/org/apache/flink/flink-metrics-prometheus/2.1.3/flink-metrics-prometheus-2.1.3.jar
 
 USER flink
