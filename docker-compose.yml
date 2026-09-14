@@ -10,27 +10,16 @@ services:
 
     environment:
       KAFKA_NODE_ID: 1
-
       KAFKA_PROCESS_ROLES: broker,controller
-
       KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
-
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
-
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
-
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
-
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-
       KAFKA_NUM_PARTITIONS: 3
 
     volumes:
@@ -41,6 +30,74 @@ services:
         [
           "CMD-SHELL",
           "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+
+  kafka-init:
+    image: apache/kafka:4.3.1
+    container_name: fraud-kafka-init
+    restart: "no"
+
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+    entrypoint:
+      - /bin/sh
+      - -c
+
+    command:
+      - |
+        set -e
+
+        echo "Checking Kafka topic: transactions"
+
+        /opt/kafka/bin/kafka-topics.sh \
+          --bootstrap-server kafka:9092 \
+          --create \
+          --if-not-exists \
+          --topic transactions \
+          --partitions 3 \
+          --replication-factor 1
+
+        echo "Kafka topic configuration:"
+
+        /opt/kafka/bin/kafka-topics.sh \
+          --bootstrap-server kafka:9092 \
+          --describe \
+          --topic transactions
+
+        echo "Kafka initialization completed successfully."
+
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.8.33.6
+    container_name: fraud-clickhouse
+    restart: unless-stopped
+
+    ports:
+      - "${CLICKHOUSE_HTTP_PORT:-8123}:8123"
+      - "9000:9000"
+
+    environment:
+      CLICKHOUSE_DB: fraud_detection
+      CLICKHOUSE_USER: fraud_user
+      CLICKHOUSE_PASSWORD: change_me
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./clickhouse/init:/docker-entrypoint-initdb.d
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -q --spider http://localhost:8123/ping || exit 1"
         ]
       interval: 10s
       timeout: 5s
@@ -64,9 +121,8 @@ services:
       - "9249:9249"
 
     depends_on:
-      kafka:
-        condition: service_healthy
-
+      kafka-init:
+        condition: service_completed_successfully
       clickhouse:
         condition: service_healthy
 
@@ -77,8 +133,15 @@ services:
       CLICKHOUSE_USER: fraud_user
       CLICKHOUSE_PASSWORD: change_me
 
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC: transactions
+      KAFKA_GROUP_ID: fraud-detection-flink
+
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: jobmanager
+        rest.address: 0.0.0.0
+        rest.bind-address: 0.0.0.0
+        rest.port: 8081
 
         taskmanager.memory.process.size: 1536m
         taskmanager.numberOfTaskSlots: 2
@@ -89,13 +152,6 @@ services:
 
         state.checkpoints.dir: file:///opt/flink/checkpoints
         execution.checkpointing.savepoint-dir: file:///opt/flink/savepoints
-
-        execution.checkpointing.interval: 30s
-        execution.checkpointing.mode: EXACTLY_ONCE
-        execution.checkpointing.timeout: 60s
-        execution.checkpointing.min-pause: 10s
-        execution.checkpointing.max-concurrent-checkpoints: 1
-        execution.checkpointing.externalized-checkpoint-retention: RETAIN_ON_CANCELLATION
 
         restart-strategy.type: fixed-delay
         restart-strategy.fixed-delay.attempts: 3
@@ -132,18 +188,16 @@ services:
 
     command: taskmanager
 
+    ports:
+      - "9250:9249"
+
     depends_on:
       jobmanager:
         condition: service_healthy
-
-      kafka:
-        condition: service_healthy
-
+      kafka-init:
+        condition: service_completed_successfully
       clickhouse:
         condition: service_healthy
-
-    ports:
-      - "9250:9249"
 
     environment:
       CLICKHOUSE_HOST: clickhouse
@@ -151,6 +205,10 @@ services:
       CLICKHOUSE_DATABASE: fraud_detection
       CLICKHOUSE_USER: fraud_user
       CLICKHOUSE_PASSWORD: change_me
+
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC: transactions
+      KAFKA_GROUP_ID: fraud-detection-flink
 
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: jobmanager
@@ -164,13 +222,6 @@ services:
 
         state.checkpoints.dir: file:///opt/flink/checkpoints
         execution.checkpointing.savepoint-dir: file:///opt/flink/savepoints
-
-        execution.checkpointing.interval: 30s
-        execution.checkpointing.mode: EXACTLY_ONCE
-        execution.checkpointing.timeout: 60s
-        execution.checkpointing.min-pause: 10s
-        execution.checkpointing.max-concurrent-checkpoints: 1
-        execution.checkpointing.externalized-checkpoint-retention: RETAIN_ON_CANCELLATION
 
         restart-strategy.type: fixed-delay
         restart-strategy.fixed-delay.attempts: 3
@@ -196,30 +247,169 @@ services:
       start_period: 20s
 
 
-  clickhouse:
-    image: clickhouse/clickhouse-server:25.8.33.6
-    container_name: fraud-clickhouse
+  job-submitter:
+    image: fraud-pyflink:2.1.3
+    container_name: fraud-flink-job-submitter
+    restart: "no"
+
+    depends_on:
+      jobmanager:
+        condition: service_healthy
+      taskmanager:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      clickhouse:
+        condition: service_healthy
+
+    environment:
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: 8123
+      CLICKHOUSE_DATABASE: fraud_detection
+      CLICKHOUSE_USER: fraud_user
+      CLICKHOUSE_PASSWORD: change_me
+
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC: transactions
+      KAFKA_GROUP_ID: fraud-detection-flink
+
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: jobmanager
+        rest.address: jobmanager
+        rest.port: 8081
+        parallelism.default: 2
+
+    volumes:
+      - ./flink/jobs:/opt/flink/usrlib
+      - flink-checkpoints:/opt/flink/checkpoints
+      - flink-savepoints:/opt/flink/savepoints
+
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+
+        echo "Waiting for Flink JobManager..."
+
+        i=0
+
+        while [ "$$i" -lt 60 ]; do
+          if curl -fsS http://jobmanager:8081/overview >/dev/null 2>&1; then
+            echo "Flink JobManager is reachable."
+            break
+          fi
+
+          i=$$((i + 1))
+          echo "Waiting for JobManager... attempt $$i/60"
+          sleep 2
+        done
+
+        if [ "$$i" -ge 60 ]; then
+          echo "Timed out waiting for Flink JobManager."
+          exit 1
+        fi
+
+        RUNNING=$$(curl -fsS http://jobmanager:8081/jobs/overview \
+          | python3 -c 'import json,sys; d=json.load(sys.stdin); print(any(j.get("name") == "Fraud Detection ClickHouse Pipeline" and j.get("state") == "RUNNING" for j in d.get("jobs", [])))')
+
+        if [ "$$RUNNING" = "True" ]; then
+          echo "Fraud Detection ClickHouse Pipeline is already running."
+          echo "Skipping duplicate submission."
+          exit 0
+        fi
+
+        echo "No running Fraud Detection ClickHouse Pipeline found."
+        echo "Waiting for 2 available TaskManager slots..."
+
+        i=0
+
+        while [ "$$i" -lt 60 ]; do
+          AVAILABLE=$$(curl -fsS http://jobmanager:8081/overview \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin).get("slots-available", 0))' \
+            2>/dev/null || echo 0)
+
+          echo "Available slots: $$AVAILABLE"
+
+          if [ "$$AVAILABLE" -ge 2 ] 2>/dev/null; then
+            echo "TaskManager has enough available slots."
+            break
+          fi
+
+          i=$$((i + 1))
+          echo "Waiting for TaskManager slots... attempt $$i/60"
+          sleep 2
+        done
+
+        if [ "$$i" -ge 60 ]; then
+          echo "Timed out waiting for TaskManager slots."
+          exit 1
+        fi
+
+        RUNNING=$$(curl -fsS http://jobmanager:8081/jobs/overview \
+          | python3 -c 'import json,sys; d=json.load(sys.stdin); print(any(j.get("name") == "Fraud Detection ClickHouse Pipeline" and j.get("state") == "RUNNING" for j in d.get("jobs", [])))')
+
+        if [ "$$RUNNING" = "True" ]; then
+          echo "Pipeline started while submitter was waiting."
+          echo "Skipping duplicate submission."
+          exit 0
+        fi
+
+        echo "Submitting Fraud Detection ClickHouse Pipeline..."
+
+        flink run \
+          -m jobmanager:8081 \
+          -d \
+          -py /opt/flink/usrlib/fraud_job.py
+
+        echo "Flink submission command succeeded."
+
+        echo "Waiting for job to enter RUNNING state..."
+
+        i=0
+
+        while [ "$$i" -lt 30 ]; do
+          RUNNING=$$(curl -fsS http://jobmanager:8081/jobs/overview \
+            | python3 -c 'import json,sys; d=json.load(sys.stdin); print(any(j.get("name") == "Fraud Detection ClickHouse Pipeline" and j.get("state") == "RUNNING" for j in d.get("jobs", [])))' \
+            2>/dev/null || echo False)
+
+          if [ "$$RUNNING" = "True" ]; then
+            echo "Fraud Detection ClickHouse Pipeline is RUNNING."
+            exit 0
+          fi
+
+          i=$$((i + 1))
+          echo "Waiting for RUNNING state... attempt $$i/30"
+          sleep 2
+        done
+
+        echo "Job was submitted but did not reach RUNNING state in time."
+        exit 1
+
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: fraud-prometheus
     restart: unless-stopped
 
     ports:
-      - "${CLICKHOUSE_HTTP_PORT:-8123}:8123"
-      - "9000:9000"
-
-    environment:
-      CLICKHOUSE_DB: fraud_detection
-      CLICKHOUSE_USER: fraud_user
-      CLICKHOUSE_PASSWORD: change_me
-      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+      - "9090:9090"
 
     volumes:
-      - clickhouse-data:/var/lib/clickhouse
-      - ./clickhouse/init:/docker-entrypoint-initdb.d
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+
+    depends_on:
+      jobmanager:
+        condition: service_started
+      taskmanager:
+        condition: service_started
 
     healthcheck:
       test:
         [
           "CMD-SHELL",
-          "wget -q --spider http://localhost:8123/ping || exit 1"
+          "wget -q --spider http://localhost:9090/-/healthy || exit 1"
         ]
       interval: 10s
       timeout: 5s
@@ -240,17 +430,13 @@ services:
 
     volumes:
       - grafana-data:/var/lib/grafana
-
       - ./grafana/provisioning:/etc/grafana/provisioning
-
       - ./grafana/dashboards:/var/lib/grafana/dashboards
-
       - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards
 
     depends_on:
       clickhouse:
         condition: service_healthy
-
       prometheus:
         condition: service_healthy
 
@@ -259,37 +445,6 @@ services:
         [
           "CMD-SHELL",
           "wget -q --spider http://localhost:3000/api/health || exit 1"
-        ]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 20s
-
-
-  prometheus:
-    image: prom/prometheus:latest
-    container_name: fraud-prometheus
-    restart: unless-stopped
-
-    ports:
-      - "9090:9090"
-
-    volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus-data:/prometheus
-
-    depends_on:
-      jobmanager:
-        condition: service_started
-
-      taskmanager:
-        condition: service_started
-
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "wget -q --spider http://localhost:9090/-/healthy || exit 1"
         ]
       interval: 10s
       timeout: 5s

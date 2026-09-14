@@ -5,8 +5,10 @@ contactPoints:
     name: Slack Fraud Alerts
     receivers:
       - uid: slack-fraud-alerts
-        type: webhook
+        type: slack
         settings:
+          recipient: "#all-fraud-detection-grafana-alerts"
           url: "${SLACK_WEBHOOK_URL}"
-          httpMethod: POST
+          title: '{{ template "slack.default.title" . }}'
+          text: '{{ template "slack.default.text" . }}'
         disableResolveMessage: false
