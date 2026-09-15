@@ -15,7 +15,7 @@ fake = Faker()
 
 KAFKA_BOOTSTRAP_SERVERS = os.getenv(
     "KAFKA_BOOTSTRAP_SERVERS",
-    "localhost:9092",
+    "localhost:29092",
 )
 
 KAFKA_TRANSACTION_TOPIC = os.getenv(
