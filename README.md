@@ -51,6 +51,8 @@ docker compose up -d
 
 # Architecture
 
+![Real-Time Fraud Detection Pipeline Architecture](docs/images/architecture.png)
+
 ```text
                            +-----------------------+
                            |    Python Producer    |
